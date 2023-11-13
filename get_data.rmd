@@ -1,0 +1,178 @@
+---
+title: "Get Data"
+author: "Nakiya Noorbhai"
+date: "2023-11-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(sf)
+library(geodata)
+library(terra)
+library(sp)
+library(tidyverse)
+library(mapview)
+library(spOccupancy)
+library(ggplot2)
+library(stars) 
+library(pals)
+#library(cowplot)
+library(MCMCvis)
+library(naniar)
+
+```
+
+
+## Get and Format Data (except site covs)
+
+```{r}
+
+#GET Y == detection/non-detection matrix (double, num rows = num sites, num cols = num visits)
+
+full_det_df <- read.csv("Full_dataset_mapping_Nov2023_clean.csv",sep = ";") %>% mutate(across(where(is.character), str_trim)) #read-in data & remove any potential whitespaces
+names(full_det_df) <- full_det_df[1,] #make first row header
+full_det_df <- full_det_df[-1,-1]  %>% 
+       rename(exp1 = 8, exp2 = 9, exp3 = 10) #drop first row and column + rename experience columns
+
+#test1 <-
+  #full_det_df %>%
+  #filter_at(vars(starts_with("visit")), all_vars(is.na(.)))
+
+#test1
+
+det_df <-  select(full_det_df, 2:4)
+
+#unique(det_df$visit3)
+
+det_df$visit1 = as.numeric(as.character(det_df$visit1)) #convert col from char to numeric
+det_df$visit2 = as.numeric(as.character(det_df$visit2)) 
+det_df$visit3 = as.numeric(as.character(det_df$visit3)) 
+
+#test2 <-
+  #det_df %>%
+  #filter_at(vars(starts_with("visit")), all_vars(is.na(.)))
+#test2
+
+det_matrix = data.matrix(det_df) #convert df to matrix
+row.names(det_matrix) <- full_det_df$celle_id #set dimnames
+colnames(det_matrix) <-  c("visit1", "visit2", "visit3")
+#typeof(det_df) #check object type
+
+det_matrix_df <- as.data.frame(det_matrix)
+unique(det_matrix_df$visit1)
+
+##########################################################################
+
+#GET DET.COVS == detection covariates (list, e1 = observer matrix (double), e2 = experience matrix (double))
+
+detcp_df <-  select(full_det_df, 5:7)
+#unique(detcp_df) #check values
+detcp_df[detcp_df == "Mette"] <- "1"
+detcp_df[detcp_df == "Simon"] <- "2"
+detcp_df[detcp_df == "Joy"] <- "4"
+detcp_df[detcp_df == "Nakiya"] <- "3"
+detcp_df$person1 = as.numeric(as.character(detcp_df$person1)) #convert col from char to numeric
+detcp_df$person2 = as.numeric(as.character(detcp_df$person2)) 
+detcp_df$person3 = as.numeric(as.character(detcp_df$person3)) 
+detcp_matrix = data.matrix(detcp_df) #convert df to matrix
+row.names(detcp_matrix) <- full_det_df$celle_id #set dimnames
+colnames(detcp_matrix) <-  c("person1", "person2", "person3")
+#typeof(detcp_df) #check object type
+
+detce_df <-  select(full_det_df, 8:10)
+#unique(detce_df) #check values
+detce_df$exp1 = as.numeric(as.character(detce_df$exp1)) #convert col from char to numeric
+detce_df$exp2 = as.numeric(as.character(detce_df$exp2)) 
+detce_df$exp3 = as.numeric(as.character(detce_df$exp3)) 
+detce_matrix = data.matrix(detce_df) #convert df to matrix
+row.names(detce_matrix) <- full_det_df$celle_id #set dimnames
+colnames(detce_matrix) <-  c("exp1", "exp2", "exp3")
+#typeof(detce_df) #check object type
+
+##########################################################################
+
+#GET COORDS == projected lat/long values for cell centriods (matrix, col1 = projected lat values, col2 = projected long values)
+
+coords_df <- read_csv("all_5km_XY_coords.csv") %>% 
+  select(X, Y) %>% 
+  st_as_sf(coords = c("X", "Y"), crs = 4326) %>% 
+  st_transform("+proj=aea +lat_0=0 +lon_0=25 +lat_1=20 +lat_2=-23 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs") %>% 
+    mutate(x = st_coordinates(geometry)[,1],
+           y = st_coordinates(geometry)[,2]) %>% 
+  st_drop_geometry()
+
+coords_matrix <- data.matrix(coords_df)
+
+#typeof(coords_matrix)
+
+
+##########################################################################
+
+```
+
+## Get and Format Site Covs
+
+```{r}
+
+#ELEVATION
+elevation_df <- read.csv("elevation_range.csv") %>% replace(is.na(.), '-')
+elevation = elevation_df$V1
+
+#LANDCOVER
+
+#barren
+barren_df <- read.csv("mean_barren.csv") 
+barren = barren_df$V1
+
+#deciduous
+deciduous_df <- read.csv("mean_deciduous.csv") 
+deciduous = deciduous_df$V1
+
+#evergreen
+evergreen_df <- read.csv("mean_evergreen.csv") 
+evergreen = evergreen_df$V1
+
+#managed
+managed_df <- read.csv("mean_managed.csv") 
+managed = managed_df$V1
+
+#mixed
+mixed_df <- read.csv("mean_mixed.csv") 
+mixed = mixed_df$V1
+
+#needleleaf
+needleleaf_df <- read.csv("mean_needleleaf.csv") 
+needleleaf = needleleaf_df$V1
+
+#shrub
+shrub_df <- read.csv("mean_shrub.csv") 
+shrub = shrub_df$V1
+
+#urban
+urban_df <- read.csv("mean_urban.csv") 
+urban = urban_df$V1
+
+site_covs_df <- data.frame(elevation, barren, deciduous, evergreen, managed, mixed, needleleaf, shrub, urban)
+
+```
+
+#Save data object
+
+```{r}
+
+#CREATE AND SAVE DATA OBJECT 
+y <- det_matrix 
+occ.covs <- site_covs_df 
+det.covs <- list(observer = detcp_matrix, experience = detce_matrix)
+coords <- coords_matrix
+save(y, occ.covs,det.covs,coords, file ="sand_data_africa.rda")
+
+data.spOcc <- list(y=y,occ.covs = occ.covs, det.covs = det.covs,coords=coords)
+
+```
+
+```{r}
+#test for missing covariate values
+#new_data <- data.spOcc$occ.covs %>% filter_all(any_vars(is.na(.))) 
+```
+
